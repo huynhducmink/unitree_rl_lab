@@ -34,4 +34,4 @@ FSM:
     ]
   Velocity:
     # policy_dir: config/policy/velocity
-    policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity
+    policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity/2025-08-30_17-58-39
