@@ -297,7 +297,7 @@ class ObservationsCfg:
             clip=(0.0, 1.0),
         )
         def __post_init__(self):
-            self.history_length = 5
+            self.history_length = 4
 
     critic: CriticCfg = CriticCfg()
 
