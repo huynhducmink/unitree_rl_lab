@@ -224,3 +224,56 @@ def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joint
         )
     reward *= 1 / len(mirror_joints) if len(mirror_joints) > 0 else 0
     return reward
+
+import re
+import isaaclab.utils.math as math_utils
+from isaaclab.assets import RigidObject, Articulation
+
+def _get_body_id_by_name(asset: Articulation | RigidObject, body_name: str, device) -> int:
+    # simple cached lookup
+    if not hasattr(asset, "_body_name_to_id"):
+        asset._body_name_to_id = {n: i for i, n in enumerate(asset.body_names)}
+    return asset._body_name_to_id[body_name]
+
+@torch.no_grad()
+def _find_first_matching_body_ids(asset: Articulation, regex_str: str, device) -> list[int]:
+    rx = re.compile(regex_str)
+    ids = []
+    for i, n in enumerate(asset.body_names):
+        if rx.match(n):
+            ids.append(i)
+    return ids
+
+def ee_to_target_distance_exp(env: "ManagerBasedRLEnv", ee_body_name: str, target_asset: str, std: float) -> torch.Tensor:
+    robot: Articulation = env.scene["robot"]
+    target: RigidObject = env.scene[target_asset]
+    ee_id = _get_body_id_by_name(robot, ee_body_name, env.device)
+
+    ee_pos = robot.data.body_pos_w[:, ee_id, :]
+    tgt_pos = target.data.root_pos_w[:, :]
+
+    d = torch.linalg.norm(ee_pos - tgt_pos, dim=-1)
+    return torch.exp(-(d**2) / (2 * (std**2)))
+
+def touch_target_sparse(
+    env: "ManagerBasedRLEnv",
+    ee_regex: str,
+    target_asset: str,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    robot: Articulation = env.scene["robot"]
+    target: RigidObject = env.scene[target_asset]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Find all matching EE bodies (wrist/hand links)
+    ee_ids = _find_first_matching_body_ids(robot, ee_regex, env.device)
+    if len(ee_ids) == 0:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    # Contact sensor exposes per-body contact forces. We mark success if
+    # any matching EE body has non-zero contact force with target.
+    # A simple proxy: check EE body contact force magnitude rising above a small threshold
+    forces = contact_sensor.data.net_forces_w[:, ee_ids, :]
+    magnitudes = torch.linalg.norm(forces, dim=-1)
+    ee_contact = (magnitudes > 2.0).any(dim=-1)  # threshold ~2N; tune as needed
+    return ee_contact.float()
